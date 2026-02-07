@@ -66,6 +66,8 @@ class Team:
         self.balls = 0
         self.legal_balls = 0
         self.batsmen = self._generate_batsmen()
+        self.captain = random.choice(self.batsmen)
+        self.keeper = random.choice(self.batsmen[:6])
         self.striker_idx = 0
         self.non_striker_idx = 1
         self.next_idx = 2
@@ -104,7 +106,7 @@ class Game:
 
         max_overs = 20
         max_per_bowler = 4
-        bowlers = bowling_team.batsmen[6:11]
+        bowlers = bowling_team.batsmen[5:11]
         over_number = 1
         target_reached = False
         last_bowler = None
@@ -169,7 +171,19 @@ class Game:
                     types, weights = zip(*DISMISSALS)
                     how = random.choices(types, weights=weights)[0]
                     team.striker.out = True
-                    team.striker.how_out = how
+                    if how == "Caught":
+                        fielder = random.choice(bowling_team.batsmen)
+                        team.striker.how_out = f"c {fielder.short_name} b {bowler.short_name}"
+                    elif how == "Stumped":
+                        team.striker.how_out = f"st \u2020{bowling_team.keeper.short_name} b {bowler.short_name}"
+                    elif how == "Bowled":
+                        team.striker.how_out = f"b {bowler.short_name}"
+                    elif how == "LBW":
+                        team.striker.how_out = f"lbw b {bowler.short_name}"
+                    elif how == "Run Out":
+                        team.striker.how_out = "Run Out"
+                    elif how == "Hit Wicket":
+                        team.striker.how_out = f"Hit Wicket b {bowler.short_name}"
                     desc = f"OUT! ({how})"
                     if team.next_idx < len(team.batsmen):
                         team.striker_idx = team.next_idx
@@ -178,7 +192,7 @@ class Game:
                     else:
                         new_batsman = None
 
-                ball_display = f"{over_number}.{balls_this_over}"
+                ball_display = f"{over_number - 1}.{balls_this_over}"
                 print(f"{ball_display}: [{roll}] {desc} "
                       f"({display_name}*)  |  "
                       f"Score: {team.runs}/{team.outs}")
@@ -190,6 +204,24 @@ class Game:
                     print(f"\n{team.name} reached the target!")
                     target_reached = True
                     break
+
+            # End of over summary
+            if not target_reached and not team.is_all_out():
+                overs_so_far = self._format_overs(team.legal_balls)
+                bowler_overs = self._format_overs(bowler.bowling_balls)
+                print(f"\n  End of Over {over_number}: {team.name} {team.runs}/{team.outs} ({overs_so_far} ov)")
+                striker = team.striker
+                non_striker = team.non_striker
+                star_s = "" if striker.out else "*"
+                star_ns = "" if non_striker.out else "*"
+                print(f"  {striker.short_name} {striker.runs}{star_s} ({striker.balls_faced}b)  |  "
+                      f"{non_striker.short_name} {non_striker.runs}{star_ns} ({non_striker.balls_faced}b)")
+                print(f"  {bowler.short_name}: {bowler_overs} ov, "
+                      f"{bowler.wickets_taken}/{bowler.runs_conceded}")
+                if target is not None:
+                    remaining = target - team.runs
+                    print(f"  Need {remaining} runs from {max_overs * 6 - team.legal_balls} balls")
+                print()
 
             # End of over: swap strike
             if not target_reached and not team.is_all_out():
@@ -221,10 +253,10 @@ class Game:
         print(f"\n--- Scorecard ---")
         for b in team.batsmen:
             if b.out:
-                print(f"  {b.short_name:<18} {b.how_out:<12} "
+                print(f"  {b.short_name:<18} {b.how_out:<28} "
                       f"{b.runs}  ({b.balls_faced} balls)")
             elif b.balls_faced > 0:
-                print(f"  {b.short_name:<18} {'not out':<12} "
+                print(f"  {b.short_name:<18} {'not out':<28} "
                       f"{b.runs}* ({b.balls_faced} balls)")
             else:
                 print(f"  {b.short_name:<18} did not bat")
@@ -244,24 +276,27 @@ class Game:
                   f"{b.wickets_taken}/{b.runs_conceded}")
 
     def declare_winner(self):
+        bat_first = self.batting_first
+        bat_second = self.batting_second
+
         print(f"\n{'='*40}")
         print("RESULT")
         print(f"{'='*40}")
-        print(f"{self.team1.name}: {self.team1.runs}/{self.team1.outs}")
-        print(f"{self.team2.name}: {self.team2.runs}/{self.team2.outs}")
+        print(f"{bat_first.name}: {bat_first.runs}/{bat_first.outs}")
+        print(f"{bat_second.name}: {bat_second.runs}/{bat_second.outs}")
         print()
 
-        if self.team1.runs > self.team2.runs:
-            diff = self.team1.runs - self.team2.runs
-            print(f"{self.team1.name} wins by {diff} runs!")
-        elif self.team2.runs > self.team1.runs:
-            wickets = 10 - self.team2.outs
-            print(f"{self.team2.name} wins by {wickets} wickets!")
+        if bat_first.runs > bat_second.runs:
+            diff = bat_first.runs - bat_second.runs
+            print(f"{bat_first.name} wins by {diff} runs!")
+        elif bat_second.runs > bat_first.runs:
+            wickets = 10 - bat_second.outs
+            print(f"{bat_second.name} wins by {wickets} wickets!")
         else:
             print("It's a tie!")
 
         print(f"\n--- Top Scorers ---")
-        for team in (self.team1, self.team2):
+        for team in (bat_first, bat_second):
             print(f"{team.name}:")
             top3 = sorted(team.batsmen, key=lambda b: b.runs, reverse=True)[:3]
             for i, b in enumerate(top3, 1):
@@ -269,8 +304,8 @@ class Game:
                 print(f"  {i}. {b.short_name}   {b.runs}{star}")
 
         print(f"\n--- Top Bowlers ---")
-        for team, bowling_team in ((self.team1, self.team2),
-                                   (self.team2, self.team1)):
+        for team, bowling_team in ((bat_first, bat_second),
+                                   (bat_second, bat_first)):
             print(f"{bowling_team.name} (bowling vs {team.name}):")
             active = [b for b in bowling_team.batsmen if b.bowling_balls > 0]
             top3 = sorted(active, key=lambda b: (-b.wickets_taken, b.runs_conceded))[:3]
@@ -279,9 +314,43 @@ class Game:
                 print(f"  {i}. {b.short_name}   {b.wickets_taken}/{b.runs_conceded} ({overs} ov)")
 
     def play(self):
-        self.play_innings(self.team1, self.team2)
-        target = self.team1.runs + 1
-        self.play_innings(self.team2, self.team1, target=target)
+        print(f"\nCoin Toss!")
+        print(f"{self.team1.name} captain: {self.team1.captain.short_name} vs "
+              f"{self.team2.name} captain: {self.team2.captain.short_name}")
+
+        while True:
+            call = input(f"Your captain {self.team1.captain.short_name} calls - Heads or Tails? (h/t): ").strip().lower()
+            if call in ("h", "t"):
+                break
+            print("Please enter 'h' or 't'.")
+
+        call_name = "Heads" if call == "h" else "Tails"
+        flip = random.choice(["Heads", "Tails"])
+
+        if call_name == flip:
+            print(f"It's {flip}! You win the toss!")
+            while True:
+                choice = input("Bat or Bowl? (bat/bowl): ").strip().lower()
+                if choice in ("bat", "bowl"):
+                    break
+                print("Please enter 'bat' or 'bowl'.")
+        else:
+            print(f"It's {flip}! You lose the toss.")
+            choice = random.choice(["bat", "bowl"])
+            print(f"{self.team2.name} choose to {choice}")
+            # Invert: if opposition chooses to bat, player bowls and vice versa
+            choice = "bowl" if choice == "bat" else "bat"
+
+        if choice == "bat":
+            self.batting_first = self.team1
+            self.batting_second = self.team2
+        else:
+            self.batting_first = self.team2
+            self.batting_second = self.team1
+
+        self.play_innings(self.batting_first, self.batting_second)
+        target = self.batting_first.runs + 1
+        self.play_innings(self.batting_second, self.batting_first, target=target)
         self.declare_winner()
 
 
@@ -289,8 +358,8 @@ def main():
     print("Calculator Cricket")
     print("==================\n")
 
-    name1 = input("Enter Team 1 name (default: Team 1): ").strip()
-    name2 = input("Enter Team 2 name (default: Team 2): ").strip()
+    name1 = input("Enter your team name (default: Team 1): ").strip()
+    name2 = input("Enter opposition team name (default: Team 2): ").strip()
 
     if not name1:
         name1 = "Team 1"
@@ -298,6 +367,14 @@ def main():
         name2 = "Team 2"
 
     game = Game(name1, name2)
+
+    print(f"\nYour team - {game.team1.name}:")
+    print(f"  Captain: {game.team1.captain.short_name} (c)")
+    print(f"  Wicket Keeper: {game.team1.keeper.short_name} (wk)")
+    print(f"\nOpposition - {game.team2.name}:")
+    print(f"  Captain: {game.team2.captain.short_name} (c)")
+    print(f"  Wicket Keeper: {game.team2.keeper.short_name} (wk)")
+
     game.play()
 
 
