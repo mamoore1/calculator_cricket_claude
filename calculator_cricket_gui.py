@@ -14,7 +14,7 @@ from calculator_cricket import (
 
 # ---------- Constants ----------
 
-WIDTH, HEIGHT = 1024, 700
+WIDTH, HEIGHT = 1024, 900
 
 COLORS = {
     'bg':          (34, 85, 34),
@@ -42,6 +42,7 @@ class GamePhase(Enum):
     WAITING_FOR_BALL = 5
     INNINGS_COMPLETE = 6
     MATCH_RESULT = 7
+    OVER_COMPLETE = 8
 
 
 class CricketGUI:
@@ -82,6 +83,8 @@ class CricketGUI:
         self.last_roll = None
         self.last_batsman_name = None
         self.scorecard_scroll = 0
+        self.milestone_message = None
+        self.over_complete_pending = False
         self.bowlers = []
 
     def _select_bowler(self):
@@ -102,8 +105,14 @@ class CricketGUI:
         self.last_roll = None
         self.last_batsman_name = None
         self.scorecard_scroll = 0
+        self.milestone_message = None
+        self.over_complete_pending = False
+        self.top_bat_idx = batting.striker_idx
+        self.bot_bat_idx = batting.non_striker_idx
+        self.bowler_order = []
         self.bowlers = bowling.players[5:TEAM_SIZE]
         self.current_bowler = self._select_bowler()
+        self.bowler_order.append(self.current_bowler)
 
     def _end_over(self):
         """Handle end-of-over housekeeping."""
@@ -116,6 +125,8 @@ class CricketGUI:
         self.current_over_results = []
         if self.over_number <= MAX_OVERS:
             self.current_bowler = self._select_bowler()
+            if self.current_bowler not in self.bowler_order:
+                self.bowler_order.append(self.current_bowler)
 
     def _check_innings_end(self):
         """Return True if innings should end."""
@@ -131,6 +142,10 @@ class CricketGUI:
         roll = random.randint(0, 9)
         self.last_roll = roll
         self.last_batsman_name = self.batting_team.striker.short_name
+        self.milestone_message = None
+
+        old_striker_idx = self.batting_team.striker_idx
+        runs_before = self.batting_team.striker.runs
 
         result = self.game._process_ball(
             self.batting_team, self.bowling_team, self.current_bowler, roll)
@@ -138,16 +153,31 @@ class CricketGUI:
         self.last_result = result
         self.current_over_results.append((roll, result))
 
+        # Update display slots: replace dismissed batsman with incoming one
+        if result.is_wicket and not self.batting_team.is_all_out():
+            new_idx = self.batting_team.striker_idx
+            if self.top_bat_idx == old_striker_idx:
+                self.top_bat_idx = new_idx
+            elif self.bot_bat_idx == old_striker_idx:
+                self.bot_bat_idx = new_idx
+
+        # Check milestones on the batsman who faced the ball
+        if not result.is_wicket:
+            runs_after = self.batting_team.striker.runs
+            if runs_before < 100 <= runs_after:
+                self.milestone_message = "CENTURY!"
+            elif runs_before < 50 <= runs_after:
+                self.milestone_message = "HALF-CENTURY!"
+
         if result.is_legal:
             self.balls_this_over += 1
-
-        # Check if over is complete
-        if self.balls_this_over >= 6 and not self._check_innings_end():
-            self._end_over()
 
         # Check if innings is done
         if self._check_innings_end():
             self.phase = GamePhase.INNINGS_COMPLETE
+        # Flag over as complete (transition happens on next SPACE)
+        elif self.balls_this_over >= 6:
+            self.over_complete_pending = True
 
     def _format_overs(self, legal_balls):
         return Game._format_overs(legal_balls)
@@ -210,7 +240,19 @@ class CricketGUI:
 
         elif self.phase == GamePhase.WAITING_FOR_BALL:
             if key == pygame.K_SPACE:
-                self.bowl_delivery()
+                if self.over_complete_pending:
+                    self.over_complete_pending = False
+                    self.phase = GamePhase.OVER_COMPLETE
+                else:
+                    self.bowl_delivery()
+
+        elif self.phase == GamePhase.OVER_COMPLETE:
+            if key == pygame.K_SPACE:
+                self._end_over()
+                self.last_result = None
+                self.last_roll = None
+                self.milestone_message = None
+                self.phase = GamePhase.WAITING_FOR_BALL
 
         elif self.phase == GamePhase.INNINGS_COMPLETE:
             if key == pygame.K_SPACE:
@@ -317,16 +359,19 @@ class CricketGUI:
             self.screen.blit(bt, (x + 15 - bt.get_width() // 2, 192 - bt.get_height() // 2))
             x += 36
 
-        # Right panel: batsmen
+        # Right panel: batsmen (stable positions, yellow = on strike)
         if not self.batting_team.is_all_out():
-            striker = self.batting_team.striker
-            non_striker = self.batting_team.non_striker
-            s_str = f"* {striker.short_name}  {striker.runs} ({striker.balls_faced}b)"
-            ns_str = f"  {non_striker.short_name}  {non_striker.runs} ({non_striker.balls_faced}b)"
-            s_text = self.font_small.render(s_str, True, COLORS['text_yellow'])
-            ns_text = self.font_small.render(ns_str, True, COLORS['text_gray'])
-            self.screen.blit(s_text, (WIDTH // 2 + 15, 160))
-            self.screen.blit(ns_text, (WIDTH // 2 + 15, 185))
+            si = self.batting_team.striker_idx
+            top = self.batting_team.players[self.top_bat_idx]
+            bot = self.batting_team.players[self.bot_bat_idx]
+            top_on_strike = (self.top_bat_idx == si)
+            bot_on_strike = (self.bot_bat_idx == si)
+            top_str = f"{'*' if top_on_strike else ' '} {top.short_name}  {top.runs} ({top.balls_faced}b)"
+            bot_str = f"{'*' if bot_on_strike else ' '} {bot.short_name}  {bot.runs} ({bot.balls_faced}b)"
+            top_color = COLORS['text_yellow'] if top_on_strike else COLORS['text_gray']
+            bot_color = COLORS['text_yellow'] if bot_on_strike else COLORS['text_gray']
+            self.screen.blit(self.font_small.render(top_str, True, top_color), (WIDTH // 2 + 15, 160))
+            self.screen.blit(self.font_small.render(bot_str, True, bot_color), (WIDTH // 2 + 15, 185))
 
     def _draw_bowler_info(self):
         pygame.draw.rect(self.screen, COLORS['panel_bg'], (0, 220, WIDTH, 30))
@@ -345,6 +390,12 @@ class CricketGUI:
         if self.phase == GamePhase.INNINGS_READY:
             text = self.font_medium.render("Press SPACE to start innings", True, COLORS['text_white'])
             self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, 270))
+        elif self.phase == GamePhase.OVER_COMPLETE:
+            over_done = self.over_number
+            over_text = self.font_result.render(f"End of Over {over_done}", True, COLORS['text_white'])
+            self.screen.blit(over_text, (WIDTH // 2 - over_text.get_width() // 2, 255))
+            prompt = self.font_tiny.render("Press SPACE to start next over", True, COLORS['text_gray'])
+            self.screen.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, 305))
         elif self.last_result is not None:
             # Big result text
             color = COLORS['text_yellow'] if self.last_result.runs >= 4 else COLORS['text_white']
@@ -353,15 +404,21 @@ class CricketGUI:
             result_text = self.font_result.render(self.last_result.desc, True, color)
             self.screen.blit(result_text, (WIDTH // 2 - result_text.get_width() // 2, 255))
 
-            prompt = self.font_tiny.render("Press SPACE to bowl next delivery", True, COLORS['text_gray'])
-            self.screen.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, 305))
+            if self.milestone_message:
+                milestone_text = self.font_medium.render(self.milestone_message, True, COLORS['text_yellow'])
+                self.screen.blit(milestone_text, (WIDTH // 2 - milestone_text.get_width() // 2, 295))
+                prompt = self.font_tiny.render("Press SPACE to bowl next delivery", True, COLORS['text_gray'])
+                self.screen.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, 320))
+            else:
+                prompt = self.font_tiny.render("Press SPACE to bowl next delivery", True, COLORS['text_gray'])
+                self.screen.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, 305))
         else:
             text = self.font_medium.render("Press SPACE to bowl", True, COLORS['text_white'])
             self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, 275))
 
     def _draw_scorecard(self):
         y_start = 330
-        card_height = 330
+        card_height = 530
         pygame.draw.rect(self.screen, COLORS['bg'], (0, y_start, WIDTH, card_height))
         pygame.draw.line(self.screen, COLORS['separator'], (0, y_start), (WIDTH, y_start))
 
@@ -380,7 +437,7 @@ class CricketGUI:
             if p.out:
                 status = p.how_out
                 runs_str = f"{p.runs}  ({p.balls_faced}b)"
-            elif p.balls_faced > 0:
+            elif p.balls_faced > 0 or i in (self.batting_team.striker_idx, self.batting_team.non_striker_idx):
                 status = "not out"
                 runs_str = f"{p.runs}* ({p.balls_faced}b)"
             else:
@@ -389,7 +446,9 @@ class CricketGUI:
             rows.append((p.short_name, status, runs_str))
 
         row_h = 22
-        total_h = len(rows) * row_h
+        active_bowlers = len([b for b in self.bowling_team.players if b.bowling_balls > 0])
+        # batting rows + bowling header + bowler rows + spacing
+        total_h = len(rows) * row_h + 32 + active_bowlers * row_h
         max_scroll = max(0, total_h - clip_h + 10)
         self.scorecard_scroll = min(self.scorecard_scroll, max_scroll)
 
@@ -415,8 +474,7 @@ class CricketGUI:
             bl = self.font_small.render("BOWLING", True, COLORS['text_gray'])
             self.screen.blit(bl, (15, bowl_y))
             bowl_y += 22
-            active = [b for b in self.bowling_team.players if b.bowling_balls > 0]
-            active.sort(key=lambda b: (-b.wickets_taken, b.runs_conceded))
+            active = [b for b in self.bowler_order if b.bowling_balls > 0]
             for i, b in enumerate(active):
                 by = bowl_y + i * row_h
                 if by + row_h < clip_y or by > clip_y + clip_h:
@@ -431,9 +489,9 @@ class CricketGUI:
             self.screen.set_clip(None)
 
     def _draw_status_bar(self):
-        pygame.draw.rect(self.screen, COLORS['header_bg'], (0, 660, WIDTH, 40))
+        pygame.draw.rect(self.screen, COLORS['header_bg'], (0, 860, WIDTH, 40))
         text = self.font_tiny.render("SPACE = Bowl  |  ESC = Quit  |  Scroll = Scorecard", True, COLORS['text_gray'])
-        self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, 672))
+        self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, 872))
 
     def _draw_toss_screen(self):
         self._draw_header()

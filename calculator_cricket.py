@@ -159,7 +159,6 @@ class Game:
             runs = 1
             is_legal = False
             team.runs += 1
-            team.striker.runs += 1
             bowler.runs_conceded += 1
             desc = "No-ball/Wide (+1 run)"
         elif roll == 9:
