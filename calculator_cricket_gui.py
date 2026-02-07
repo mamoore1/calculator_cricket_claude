@@ -2,6 +2,7 @@
 """PyGame GUI for Calculator Cricket."""
 
 import sys
+import math
 import random
 from enum import Enum
 
@@ -14,7 +15,7 @@ from calculator_cricket import (
 
 # ---------- Constants ----------
 
-WIDTH, HEIGHT = 1024, 900
+WIDTH, HEIGHT = 1360, 900
 
 COLORS = {
     'bg':          (34, 85, 34),
@@ -31,6 +32,18 @@ COLORS = {
     'ball_noball': (180, 80, 220),
     'row_alt':     (38, 92, 38),
     'separator':   (60, 120, 60),
+    'shot_colors': [
+        (230, 70, 70),
+        (70, 170, 230),
+        (50, 200, 80),
+        (240, 180, 40),
+        (200, 100, 220),
+        (240, 130, 50),
+        (100, 210, 210),
+        (220, 120, 160),
+    ],
+    'pitch':       (194, 178, 128),
+    'batsman':     (255, 255, 255),
 }
 
 
@@ -86,6 +99,7 @@ class CricketGUI:
         self.milestone_message = None
         self.over_complete_pending = False
         self.bowlers = []
+        self.current_over_angles = []
 
     def _select_bowler(self):
         eligible = [b for b in self.bowlers
@@ -107,6 +121,7 @@ class CricketGUI:
         self.scorecard_scroll = 0
         self.milestone_message = None
         self.over_complete_pending = False
+        self.current_over_angles = []
         self.top_bat_idx = batting.striker_idx
         self.bot_bat_idx = batting.non_striker_idx
         self.bowler_order = []
@@ -123,6 +138,7 @@ class CricketGUI:
         self.over_number += 1
         self.balls_this_over = 0
         self.current_over_results = []
+        self.current_over_angles = []
         if self.over_number <= MAX_OVERS:
             self.current_bowler = self._select_bowler()
             if self.current_bowler not in self.bowler_order:
@@ -152,6 +168,22 @@ class CricketGUI:
 
         self.last_result = result
         self.current_over_results.append((roll, result))
+
+        # Generate wagon wheel angle and length for scoring legal deliveries
+        if result.runs > 0 and result.is_legal:
+            angle = random.uniform(math.radians(30), math.radians(330))
+            runs = result.runs
+            if runs >= 4:
+                frac = 1.0
+            elif runs == 3:
+                frac = random.uniform(5/8, 7/8)
+            elif runs == 2:
+                frac = random.uniform(2/4, 3/4)
+            else:
+                frac = random.uniform(1/4, 2/4)
+            self.current_over_angles.append((angle, frac))
+        else:
+            self.current_over_angles.append(None)
 
         # Update display slots: replace dismissed batsman with incoming one
         if result.is_wicket and not self.batting_team.is_all_out():
@@ -298,6 +330,7 @@ class CricketGUI:
             self._draw_bowler_info()
             self._draw_ball_result()
             self._draw_scorecard()
+            self._draw_wagon_wheel()
             self._draw_status_bar()
 
         pygame.display.flip()
@@ -589,6 +622,61 @@ class CricketGUI:
 
         prompt = self.font_small.render("Press SPACE or ESC to exit", True, COLORS['text_gray'])
         self.screen.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, HEIGHT - 50))
+
+    def _draw_wagon_wheel(self):
+        panel_x, panel_y, panel_w, panel_h = 1024, 150, 336, 710
+
+        # Background
+        pygame.draw.rect(self.screen, COLORS['panel_bg'], (panel_x, panel_y, panel_w, panel_h))
+        pygame.draw.line(self.screen, COLORS['separator'], (panel_x, panel_y), (panel_x, panel_y + panel_h))
+
+        # Title
+        title = self.font_small.render("WAGON WHEEL", True, COLORS['text_gray'])
+        self.screen.blit(title, (panel_x + panel_w // 2 - title.get_width() // 2, panel_y + 5))
+
+        # Pitch circle with batsman at centre
+        circle_cx, circle_cy = panel_x + panel_w // 2, panel_y + 240
+        circle_r = 120
+        pygame.draw.circle(self.screen, COLORS['pitch'], (circle_cx, circle_cy), circle_r)
+
+        # Shot lines — colour by ball number, length proportional to runs
+        bat_x, bat_y = circle_cx, circle_cy
+        for i, (roll, result) in enumerate(self.current_over_results):
+            if i < len(self.current_over_angles) and self.current_over_angles[i] is not None:
+                angle, frac = self.current_over_angles[i]
+                color = COLORS['shot_colors'][i % len(COLORS['shot_colors'])]
+                line_length = circle_r * frac
+                end_x = bat_x + line_length * math.sin(angle)
+                end_y = bat_y - line_length * math.cos(angle)
+                pygame.draw.line(self.screen, color, (bat_x, bat_y), (int(end_x), int(end_y)), 4)
+
+        # Batsman marker at centre (drawn on top of lines)
+        pygame.draw.circle(self.screen, COLORS['batsman'], (bat_x, bat_y), 5)
+
+        # Legend
+        legend_y = panel_y + 400
+        legend_label = self.font_tiny.render("This Over:", True, COLORS['text_gray'])
+        self.screen.blit(legend_label, (panel_x + 15, legend_y))
+        legend_y += 20
+
+        for i, (roll, result) in enumerate(self.current_over_results):
+            color = COLORS['shot_colors'][i % len(COLORS['shot_colors'])]
+            cy = legend_y + i * 22
+
+            # Colour swatch
+            pygame.draw.circle(self.screen, color, (panel_x + 25, cy + 8), 6)
+
+            # Description
+            if result.is_wicket:
+                desc = f"Ball {i + 1}: W"
+            elif not result.is_legal:
+                desc = f"Ball {i + 1}: NB"
+            elif result.runs == 0:
+                desc = f"Ball {i + 1}: ."
+            else:
+                desc = f"Ball {i + 1}: {result.runs} run{'s' if result.runs != 1 else ''}"
+            text = self.font_tiny.render(desc, True, COLORS['text_white'])
+            self.screen.blit(text, (panel_x + 40, cy))
 
     def _ball_color(self, roll, result):
         if result.is_wicket:
