@@ -25,6 +25,7 @@ class Game:
         print(f"{'='*40}\n")
 
         while not team.is_all_out():
+            input()
             roll = random.randint(0, 9)
             team.balls += 1
 
